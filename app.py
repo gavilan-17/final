@@ -31,12 +31,21 @@ def add_sidebar():
     edad = st.sidebar.number_input("Edad", min_value=15, max_value=80, value=25)
     peso = st.sidebar.number_input("Peso (kg)", min_value=40.0, max_value=120.0, value=70.0)
     vo2 = st.sidebar.number_input("Volumen O2 máx", min_value=20.0, max_value=90.0, value=50.0)
+    lactato = st.sidebar.number_input("Umbral de lactato", min_value=2.0, max_value=6.0, value=4.0)
+    fibras_rapidas = st.sidebar.slider("% Fibras rápidas", 0, 100, 50)
+    fibras_lentas = 100 - fibras_rapidas
     
-    return max_depth, criterion, edad, peso, vo2
+    st.sidebar.write(f"% Fibras lentas: {fibras_lentas}")
+    
+    return max_depth, criterion, edad, peso, vo2, lactato, fibras_rapidas, fibras_lentas
 
 # Entrenamiento del modelo
 def entrenar_modelo(df, max_depth, criterion):
-    X = df[['Edad', 'Peso', 'Volumen_O2_max']]
+    # Usar todas las columnas disponibles excepto 'Atleta'
+    feature_columns = ['Edad', 'Peso', 'Volumen_O2_max', 'Umbral_lactato', '%Fibras_rapidas', '%Fibras_lentas']
+    available_columns = [col for col in feature_columns if col in df.columns]
+    
+    X = df[available_columns]
     y = df['Atleta']
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
@@ -56,7 +65,8 @@ def entrenar_modelo(df, max_depth, criterion):
         'X_test': X_test, 'y_test': y_test,
         'tree_model': tree_model, 'log_model': log_model,
         'tree_pred': tree_pred, 'log_pred': log_pred,
-        'tree_prob': tree_prob, 'log_prob': log_prob
+        'tree_prob': tree_prob, 'log_prob': log_prob,
+        'feature_columns': available_columns
     }
 
 # Función principal
@@ -75,14 +85,27 @@ def main():
         return
     
     # Controles del sidebar
-    max_depth, criterion, edad, peso, vo2 = add_sidebar()
+    max_depth, criterion, edad, peso, vo2, lactato, fibras_rapidas, fibras_lentas = add_sidebar()
     
     # Entrenar modelos
     resultados = entrenar_modelo(df, max_depth, criterion)
     
     # Predicción del nuevo atleta
-    nuevo_atleta = pd.DataFrame([[edad, peso, vo2]], 
-                               columns=['Edad', 'Peso', 'Volumen_O2_max'])
+    feature_values = [edad, peso, vo2]
+    feature_names = ['Edad', 'Peso', 'Volumen_O2_max']
+    
+    # Añadir características adicionales si están disponibles
+    if 'Umbral_lactato' in resultados['feature_columns']:
+        feature_values.append(lactato)
+        feature_names.append('Umbral_lactato')
+    if '%Fibras_rapidas' in resultados['feature_columns']:
+        feature_values.append(fibras_rapidas)
+        feature_names.append('%Fibras_rapidas')
+    if '%Fibras_lentas' in resultados['feature_columns']:
+        feature_values.append(fibras_lentas)
+        feature_names.append('%Fibras_lentas')
+    
+    nuevo_atleta = pd.DataFrame([feature_values], columns=feature_names)
     prediccion = resultados['tree_model'].predict(nuevo_atleta)[0]
     probabilidad = resultados['tree_model'].predict_proba(nuevo_atleta)[0]
     
@@ -109,16 +132,17 @@ def main():
             st.write(f"Total de atletas: {len(df)}")
             st.write(f"Fondistas: {(df['Atleta'] == 1).sum()}")
             st.write(f"Velocistas: {(df['Atleta'] == 0).sum()}")
-            st.dataframe(df.describe(), use_container_width=True)
+            st.write(f"Variables utilizadas: {len(resultados['feature_columns'])}")
+            st.dataframe(df[resultados['feature_columns']].describe(), use_container_width=True)
     
     with tab2:
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("Árbol de Decisión")
-            fig, ax = plt.subplots(figsize=(10, 6))
+            fig, ax = plt.subplots(figsize=(12, 8))
             plot_tree(resultados['tree_model'], filled=True, 
-                     feature_names=['Edad', 'Peso', 'VO2_max'], 
+                     feature_names=resultados['feature_columns'], 
                      class_names=["Velocista", "Fondista"], rounded=True, ax=ax)
             st.pyplot(fig)
             
@@ -144,11 +168,13 @@ def main():
             st.pyplot(fig)
             
             st.subheader("Distribución de Variables")
-            for col in ['Edad', 'Peso', 'Volumen_O2_max']:
-                fig, ax = plt.subplots(figsize=(6, 3))
-                sns.histplot(data=df, x=col, hue='Atleta', bins=15, ax=ax)
-                ax.set_title(f'Distribución de {col}')
-                st.pyplot(fig)
+            # Mostrar distribuciones de todas las variables disponibles
+            for col in resultados['feature_columns']:
+                if col in df.columns:
+                    fig, ax = plt.subplots(figsize=(6, 3))
+                    sns.histplot(data=df, x=col, hue='Atleta', bins=15, ax=ax)
+                    ax.set_title(f'Distribución de {col}')
+                    st.pyplot(fig)
     
     with tab3:
         st.subheader("Comparación: Árbol vs Regresión Logística")
