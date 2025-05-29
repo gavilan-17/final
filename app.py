@@ -2,144 +2,189 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 from matplotlib import pyplot as plt
-from sklearn.metrics import confusion_matrix, accuracy_score, classification_report, roc_curve, auc
+from sklearn.metrics import confusion_matrix, accuracy_score, classification_report, roc_auc_score, roc_curve, auc
 from sklearn.tree import DecisionTreeClassifier, plot_tree
-from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
 import streamlit as st
+from sklearn.model_selection import train_test_split
 
-st.set_page_config(page_title='Clasificador de Atletas', layout='wide', initial_sidebar_state='expanded')
+# Configuración de la página
+st.set_page_config(page_title='Clasificador de Atletas', layout='wide')
 
-# Función para cargar los datos (corregida para evitar NaN)
+# Cargar datos
+@st.cache_data
 def carga_datos():
-    try:
-        df = pd.read_csv('atletas.csv')
+    df = pd.read_csv('atletas.csv')
+    df['Atleta'] = df['Atleta'].astype(str).str.strip().str.lower()
+    df['Atleta'] = df['Atleta'].map({'fondista': 1, 'velocista': 0})
+    df.dropna(inplace=True)
+    return df
 
-        # Validar columnas necesarias
-        columnas_necesarias = ['Edad', 'Peso', 'Volumen_O2_max', 'Atleta']
-        if not all(col in df.columns for col in columnas_necesarias):
-            st.error(f"El archivo 'atletas.csv' debe contener las columnas: {', '.join(columnas_necesarias)}")
-            st.stop()
-
-        # Eliminar espacios y asegurar tipo string
-        df['Atleta'] = df['Atleta'].astype(str).str.strip()
-        df['Atleta'] = df['Atleta'].map({'fondista': 1, 'velocista': 0})
-
-        # Eliminar filas con NaN
-        df = df.dropna(subset=['Atleta', 'Edad', 'Peso', 'Volumen_O2_max'])
-
-        # Convertir a entero
-        df['Atleta'] = df['Atleta'].astype(int)
-
-        if df.empty:
-            st.error("El archivo 'atletas.csv' no contiene datos válidos después de eliminar filas con NaN.")
-            st.stop()
-
-        return df
-
-    except FileNotFoundError:
-        st.error("No se encontró el archivo 'atletas.csv'. Asegúrate de subirlo.")
-        st.stop()
-
-# Sidebar
-def add_sidebar(df):
-    st.sidebar.header('Modifica los datos')
-    st.sidebar.title('Parámetros del modelo')
-    max_depth = st.sidebar.slider('Profundidad máxima del árbol', 2, 4, 3)
+# Sidebar con controles
+def add_sidebar():
+    st.sidebar.header('Configuración del Modelo')
+    
+    max_depth = st.sidebar.slider('Profundidad máxima del árbol', 2, 10, 3)
     criterion = st.sidebar.selectbox('Criterio de división', ['gini', 'entropy'])
+    
+    st.sidebar.subheader('Datos del Nuevo Atleta')
+    edad = st.sidebar.number_input("Edad", min_value=15, max_value=80, value=25)
+    peso = st.sidebar.number_input("Peso (kg)", min_value=40.0, max_value=120.0, value=70.0)
+    vo2 = st.sidebar.number_input("Volumen O2 máx", min_value=20.0, max_value=90.0, value=50.0)
+    
+    return max_depth, criterion, edad, peso, vo2
 
-    # Validar que haya datos válidos para los sliders
-    if df['Edad'].dropna().empty or df['Peso'].dropna().empty or df['Volumen_O2_max'].dropna().empty:
-        st.error("El archivo 'atletas.csv' no contiene información válida en 'Edad', 'Peso' o 'Volumen_O2_max'.")
-        st.stop()
-
-    edad = int(df['Edad'].dropna().min())
-    peso = int(df['Peso'].dropna().min())
-    volumen_o2 = float(df['Volumen_O2_max'].dropna().min())
-
-    edad = st.sidebar.slider('Edad', edad, int(df['Edad'].max()), int(df['Edad'].mean()))
-    peso = st.sidebar.slider('Peso', int(df['Peso'].min()), int(df['Peso'].max()), int(df['Peso'].mean()))
-    volumen_o2 = st.sidebar.slider('Volumen_O2_max', float(df['Volumen_O2_max'].min()), float(df['Volumen_O2_max'].max()), float(df['Volumen_O2_max'].mean()))
-
-    return max_depth, criterion, edad, peso, volumen_o2
-
-# Función para entrenar el modelo
-def entrena_modelo(df, max_depth, criterion):
+# Entrenamiento del modelo
+def entrenar_modelo(df, max_depth, criterion):
     X = df[['Edad', 'Peso', 'Volumen_O2_max']]
     y = df['Atleta']
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    model = DecisionTreeClassifier(max_depth=max_depth, criterion=criterion)
-    model.fit(X_train, y_train)
-    return model, X_test, y_test
+    
+    # Árbol de decisión
+    tree_model = DecisionTreeClassifier(max_depth=max_depth, criterion=criterion, random_state=42)
+    tree_model.fit(X_train, y_train)
+    tree_pred = tree_model.predict(X_test)
+    tree_prob = tree_model.predict_proba(X_test)[:, 1]
+    
+    # Regresión logística
+    log_model = LogisticRegression(max_iter=1000, random_state=42)
+    log_model.fit(X_train, y_train)
+    log_pred = log_model.predict(X_test)
+    log_prob = log_model.predict_proba(X_test)[:, 1]
+    
+    return {
+        'X_test': X_test, 'y_test': y_test,
+        'tree_model': tree_model, 'log_model': log_model,
+        'tree_pred': tree_pred, 'log_pred': log_pred,
+        'tree_prob': tree_prob, 'log_prob': log_prob
+    }
 
-# Página de clasificación
-def pagina_clasificador():
-    df = carga_datos()
-    max_depth, criterion, edad, peso, volumen_o2 = add_sidebar(df)
-    model, X_test, y_test = entrena_modelo(df, max_depth, criterion)
-    y_pred = model.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
-
-    st.title('Clasificación de Atletas')
-    pagina = st.sidebar.radio("Selecciona una página:", ['Métricas y Predicción', 'Gráficos'])
-
-    if pagina == 'Métricas y Predicción':
-        col1, col2 = st.columns([1, 1])
-
-        with col1:
-            st.subheader('Métricas del Modelo')
-            st.write(f'Precisión del modelo: {accuracy:.2f}')
-            st.text(classification_report(y_test, y_pred))
-
-        with col2:
-            st.subheader('Predicción del Modelo')
-            datos_usuario = pd.DataFrame([[edad, peso, volumen_o2]], columns=['Edad', 'Peso', 'Volumen_O2_max'])
-            prediccion = model.predict(datos_usuario)[0]
-            clase_predicha = 'Fondista' if prediccion == 1 else 'Velocista'
-            st.write(f'Según el modelo, el atleta es un: **{clase_predicha}**')
-
-    elif pagina == 'Gráficos':
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.subheader('Matriz de Confusión')
-            fig, ax = plt.subplots(figsize=(5, 3))
-            conf_matrix = confusion_matrix(y_test, y_pred)
-            sns.heatmap(conf_matrix, annot=True, cmap='Blues', fmt='d', ax=ax)
-            st.pyplot(fig)
-
-            st.subheader('Curva ROC-AUC')
-            y_pred_proba = model.predict_proba(X_test)[:, 1]
-            fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
-            roc_auc = auc(fpr, tpr)
-            fig, ax = plt.subplots(figsize=(5, 3))
-            ax.plot(fpr, tpr, color='blue', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
-            ax.plot([0, 1], [0, 1], color='gray', linestyle='--')
-            ax.set_xlabel('False Positive Rate')
-            ax.set_ylabel('True Positive Rate')
-            ax.set_title('Receiver Operating Characteristic (ROC)')
-            ax.legend(loc='lower right')
-            st.pyplot(fig)
-
-        with col2:
-            st.subheader('Distribución de Predicciones')
-            fig, ax = plt.subplots(figsize=(5, 3))
-            pd.Series(y_pred).value_counts().plot(kind='bar', color=['blue', 'green'], ax=ax)
-            ax.set_xticklabels(['Velocista', 'Fondista'], rotation=0)
-            ax.set_xlabel('Clase Predicha')
-            ax.set_ylabel('Frecuencia')
-            st.pyplot(fig)
-
-            st.subheader('Árbol de Decisión')
-            fig, ax = plt.subplots(figsize=(6, 4))
-            plot_tree(model, filled=True, feature_names=['Edad', 'Peso', 'Volumen_O2_max'], class_names=['Velocista', 'Fondista'], ax=ax)
-            st.pyplot(fig)
-
-# Menú principal
+# Función principal
 def main():
-    st.sidebar.title('Menú Principal')
-    pagina = st.sidebar.radio("Navegar a:", ['Clasificador'])
-    if pagina == 'Clasificador':
-        pagina_clasificador()
+    st.title('🏃‍♂️ Clasificador de Atletas')
+    
+    # Cargar datos
+    try:
+        df = carga_datos()
+    except:
+        st.error("No se pudo cargar el archivo 'atletas.csv'. Asegúrate de que existe.")
+        return
+    
+    if df.empty:
+        st.error("No hay datos válidos en el archivo CSV.")
+        return
+    
+    # Controles del sidebar
+    max_depth, criterion, edad, peso, vo2 = add_sidebar()
+    
+    # Entrenar modelos
+    resultados = entrenar_modelo(df, max_depth, criterion)
+    
+    # Predicción del nuevo atleta
+    nuevo_atleta = pd.DataFrame([[edad, peso, vo2]], 
+                               columns=['Edad', 'Peso', 'Volumen_O2_max'])
+    prediccion = resultados['tree_model'].predict(nuevo_atleta)[0]
+    probabilidad = resultados['tree_model'].predict_proba(nuevo_atleta)[0]
+    
+    tipo = "Fondista" if prediccion == 1 else "Velocista"
+    confianza = max(probabilidad) * 100
+    
+    st.success(f"**Predicción:** El atleta será un **{tipo}** (Confianza: {confianza:.1f}%)")
+    
+    # Pestañas para organizar contenido
+    tab1, tab2, tab3 = st.tabs(["📊 Métricas", "📈 Gráficos", "🔍 Comparación"])
+    
+    with tab1:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Métricas del Árbol de Decisión")
+            accuracy = accuracy_score(resultados['y_test'], resultados['tree_pred'])
+            st.metric("Precisión", f"{accuracy:.2f}")
+            st.text("Reporte de Clasificación:")
+            st.text(classification_report(resultados['y_test'], resultados['tree_pred']))
+        
+        with col2:
+            st.subheader("Información del Dataset")
+            st.write(f"Total de atletas: {len(df)}")
+            st.write(f"Fondistas: {(df['Atleta'] == 1).sum()}")
+            st.write(f"Velocistas: {(df['Atleta'] == 0).sum()}")
+            st.dataframe(df.describe(), use_container_width=True)
+    
+    with tab2:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Árbol de Decisión")
+            fig, ax = plt.subplots(figsize=(10, 6))
+            plot_tree(resultados['tree_model'], filled=True, 
+                     feature_names=['Edad', 'Peso', 'VO2_max'], 
+                     class_names=["Velocista", "Fondista"], rounded=True, ax=ax)
+            st.pyplot(fig)
+            
+            st.subheader("Matriz de Confusión")
+            fig, ax = plt.subplots(figsize=(6, 4))
+            conf_matrix = confusion_matrix(resultados['y_test'], resultados['tree_pred'])
+            sns.heatmap(conf_matrix, annot=True, cmap='Blues', fmt='d', 
+                       xticklabels=['Velocista', 'Fondista'],
+                       yticklabels=['Velocista', 'Fondista'], ax=ax)
+            st.pyplot(fig)
+        
+        with col2:
+            st.subheader("Curva ROC")
+            fpr, tpr, _ = roc_curve(resultados['y_test'], resultados['tree_prob'])
+            roc_auc = auc(fpr, tpr)
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.plot(fpr, tpr, color='blue', label=f'AUC = {roc_auc:.2f}')
+            ax.plot([0, 1], [0, 1], linestyle='--', color='gray')
+            ax.set_xlabel('Tasa de Falsos Positivos')
+            ax.set_ylabel('Tasa de Verdaderos Positivos')
+            ax.set_title('Curva ROC')
+            ax.legend()
+            st.pyplot(fig)
+            
+            st.subheader("Distribución de Variables")
+            for col in ['Edad', 'Peso', 'Volumen_O2_max']:
+                fig, ax = plt.subplots(figsize=(6, 3))
+                sns.histplot(data=df, x=col, hue='Atleta', bins=15, ax=ax)
+                ax.set_title(f'Distribución de {col}')
+                st.pyplot(fig)
+    
+    with tab3:
+        st.subheader("Comparación: Árbol vs Regresión Logística")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Árbol de Decisión**")
+            tree_acc = accuracy_score(resultados['y_test'], resultados['tree_pred'])
+            tree_auc = roc_auc_score(resultados['y_test'], resultados['tree_prob'])
+            st.metric("Precisión", f"{tree_acc:.3f}")
+            st.metric("AUC", f"{tree_auc:.3f}")
+        
+        with col2:
+            st.markdown("**Regresión Logística**")
+            log_acc = accuracy_score(resultados['y_test'], resultados['log_pred'])
+            log_auc = roc_auc_score(resultados['y_test'], resultados['log_prob'])
+            st.metric("Precisión", f"{log_acc:.3f}")
+            st.metric("AUC", f"{log_auc:.3f}")
+        
+        # Comparación visual
+        modelos = ['Árbol', 'Regresión']
+        precisiones = [tree_acc, log_acc]
+        aucs = [tree_auc, log_auc]
+        
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+        
+        ax1.bar(modelos, precisiones, color=['skyblue', 'lightcoral'])
+        ax1.set_title('Comparación de Precisión')
+        ax1.set_ylabel('Precisión')
+        
+        ax2.bar(modelos, aucs, color=['skyblue', 'lightcoral'])
+        ax2.set_title('Comparación de AUC')
+        ax2.set_ylabel('AUC')
+        
+        st.pyplot(fig)
 
 if __name__ == '__main__':
     main()
