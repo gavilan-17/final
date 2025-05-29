@@ -21,31 +21,66 @@ def carga_datos():
     return df
 
 # Sidebar con controles
-def add_sidebar():
+def add_sidebar(df):
     st.sidebar.header('Configuración del Modelo')
     
     max_depth = st.sidebar.slider('Profundidad máxima del árbol', 2, 10, 3)
     criterion = st.sidebar.selectbox('Criterio de división', ['gini', 'entropy'])
     
-    st.sidebar.subheader('Datos del Nuevo Atleta')
-    edad = st.sidebar.number_input("Edad", min_value=15, max_value=80, value=25)
-    peso = st.sidebar.number_input("Peso (kg)", min_value=40.0, max_value=120.0, value=70.0)
-    vo2 = st.sidebar.number_input("Volumen O2 máx", min_value=20.0, max_value=90.0, value=50.0)
-    lactato = st.sidebar.number_input("Umbral de lactato", min_value=2.0, max_value=6.0, value=4.0)
-    fibras_rapidas = st.sidebar.slider("% Fibras rápidas", 0, 100, 50)
-    fibras_lentas = 100 - fibras_rapidas
+    # Selección de variables para el modelo
+    st.sidebar.subheader('Variables del Modelo')
+    available_features = ['Edad', 'Peso', 'Altura', 'Volumen_O2_max', 'Umbral_lactato', '%Fibras_rapidas', '%Fibras_lentas']
+    available_in_df = [col for col in available_features if col in df.columns]
     
-    st.sidebar.write(f"% Fibras lentas: {fibras_lentas}")
+    selected_features = st.sidebar.multiselect(
+        'Selecciona las variables a usar:',
+        available_in_df,
+        default=available_in_df[:3] if len(available_in_df) >= 3 else available_in_df
+    )
     
-    return max_depth, criterion, edad, peso, vo2, lactato, fibras_rapidas, fibras_lentas
+    if not selected_features:
+        st.sidebar.error("Selecciona al menos una variable")
+        selected_features = available_in_df[:1]  # Por defecto usar la primera disponible
+    
+    st.sidebar.subheader('Datos del Nuevo Atleta para Predicción')
+    
+    # Controles dinámicos según las variables seleccionadas
+    atleta_data = {}
+    
+    if 'Edad' in selected_features:
+        atleta_data['Edad'] = st.sidebar.number_input("Edad", min_value=15, max_value=80, value=25)
+    
+    if 'Peso' in selected_features:
+        atleta_data['Peso'] = st.sidebar.number_input("Peso (kg)", min_value=40.0, max_value=120.0, value=70.0)
+    
+    if 'Altura' in selected_features:
+        atleta_data['Altura'] = st.sidebar.number_input("Altura (cm)", min_value=140.0, max_value=220.0, value=175.0)
+    
+    if 'Volumen_O2_max' in selected_features:
+        atleta_data['Volumen_O2_max'] = st.sidebar.number_input("Volumen O2 máx", min_value=20.0, max_value=90.0, value=50.0)
+    
+    if 'Umbral_lactato' in selected_features:
+        atleta_data['Umbral_lactato'] = st.sidebar.number_input("Umbral de lactato", min_value=2.0, max_value=6.0, value=4.0)
+    
+    if '%Fibras_rapidas' in selected_features:
+        fibras_rapidas = st.sidebar.slider("% Fibras rápidas", 0, 100, 50)
+        atleta_data['%Fibras_rapidas'] = fibras_rapidas
+        
+        # Calcular fibras lentas automáticamente si está seleccionado
+        if '%Fibras_lentas' in selected_features:
+            atleta_data['%Fibras_lentas'] = 100 - fibras_rapidas
+            st.sidebar.write(f"% Fibras lentas: {100 - fibras_rapidas}")
+    elif '%Fibras_lentas' in selected_features:
+        # Si solo fibras lentas está seleccionado
+        fibras_lentas = st.sidebar.slider("% Fibras lentas", 0, 100, 50)
+        atleta_data['%Fibras_lentas'] = fibras_lentas
+    
+    return max_depth, criterion, selected_features, atleta_data
 
 # Entrenamiento del modelo
-def entrenar_modelo(df, max_depth, criterion):
-    # Usar todas las columnas disponibles excepto 'Atleta'
-    feature_columns = ['Edad', 'Peso', 'Volumen_O2_max', 'Umbral_lactato', '%Fibras_rapidas', '%Fibras_lentas']
-    available_columns = [col for col in feature_columns if col in df.columns]
-    
-    X = df[available_columns]
+def entrenar_modelo(df, max_depth, criterion, selected_features):
+    # Usar solo las columnas seleccionadas
+    X = df[selected_features]
     y = df['Atleta']
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
@@ -66,7 +101,7 @@ def entrenar_modelo(df, max_depth, criterion):
         'tree_model': tree_model, 'log_model': log_model,
         'tree_pred': tree_pred, 'log_pred': log_pred,
         'tree_prob': tree_prob, 'log_prob': log_prob,
-        'feature_columns': available_columns
+        'feature_columns': selected_features
     }
 
 # Función principal
